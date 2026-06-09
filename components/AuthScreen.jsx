@@ -12,20 +12,39 @@ export default function AuthScreen({ onAuthed }) {
   const [notice, setNotice] = useState("");
 
   const submit = async () => {
+    if (!email.trim() || !password) { setError("Enter your email and password."); return; }
     setBusy(true); setError(""); setNotice("");
     try {
       if (mode === "signup") {
-        const { data, error } = await auth.signUp(email, password);
-        if (error) throw error;
-        if (data.user && !data.session) setNotice("Check your email to confirm your account, then sign in.");
-        else if (data.user) onAuthed(data.user);
+        const { data, error } = await auth.signUp(email.trim(), password);
+        if (error) {
+          const m = (error.message || "").toLowerCase();
+          if (m.includes("already") || m.includes("registered") || m.includes("exists")) {
+            setMode("signin"); setError("Account already exists. Please sign in."); return;
+          }
+          throw error;
+        }
+        // Supabase returns a user with no session when email confirmation is on.
+        if (data?.user && !data?.session) {
+          setNotice("Account created. Check your email to confirm, then sign in.");
+          setMode("signin");
+        } else if (data?.user) {
+          onAuthed(data.user); // → app/onboarding
+        }
       } else {
-        const { data, error } = await auth.signIn(email, password);
-        if (error) throw error;
-        onAuthed(data.user);
+        const { data, error } = await auth.signIn(email.trim(), password);
+        if (error) {
+          const m = (error.message || "").toLowerCase();
+          if (m.includes("invalid login") || m.includes("credentials")) throw new Error("Incorrect email or password.");
+          if (m.includes("confirm")) throw new Error("Please confirm your email first, then sign in.");
+          throw error;
+        }
+        onAuthed(data.user); // → app/onboarding
       }
-    } catch (e) { setError(e.message || "Something went wrong."); }
-    finally { setBusy(false); }
+    } catch (e) {
+      const msg = e?.message || "Something went wrong.";
+      setError(msg.includes("Invalid path") ? "Auth config error: the Supabase URL must be only https://YOUR-PROJECT.supabase.co (no extra path)." : msg);
+    } finally { setBusy(false); }
   };
 
   const C = {

@@ -11,6 +11,7 @@ import {
   Handshake, Mic, PlayCircle, BarChart3, Activity, Clock, TrendingUp as TrendUp, CheckCircle, Zap as ZapIcon
 } from "lucide-react";
 import { usePersistence, persist } from "../lib/usePersistence";
+import { auth } from "../lib/data";
 
 /* ====== CONFIG ======
    Set JOB_PROXY_URL to your backend (see career-os-job-proxy.js) to get LIVE jobs
@@ -150,6 +151,19 @@ const STYLES = `
 .cos-ac-item .meta { font-size:11.5px; color:var(--muted); margin-left:auto; }
 .cos-editrow { display:flex; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--line); } .cos-editrow:last-child { border-bottom:none; }
 .cos-editrow .k { width:90px; font-size:12px; color:var(--muted); font-weight:700; flex-shrink:0; }
+.cos-field { margin-bottom:16px; } .cos-field > .cos-label { display:flex; align-items:center; gap:6px; }
+.cos-pills { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:8px; }
+.cos-pill-tag { display:inline-flex; align-items:center; gap:6px; background:var(--primary-soft); color:var(--primary); font-size:12.5px; font-weight:700; padding:7px 10px 7px 12px; border-radius:99px; }
+.cos-pill-tag button { background:none; border:none; color:var(--primary); cursor:pointer; display:flex; padding:0; opacity:.7; }
+.cos-pill-tag button:hover { opacity:1; }
+.cos-sugg { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+.cos-sugg button { font-size:12px; font-weight:600; padding:6px 11px; border-radius:99px; border:1.5px dashed var(--line); background:var(--card); color:var(--muted); cursor:pointer; }
+.cos-sugg button:hover { border-color:var(--primary); color:var(--primary); }
+.cos-certcard { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 13px; margin-bottom:9px; }
+.cos-certcard .top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.cos-certcard .nm { font-weight:700; font-size:14px; }
+.cos-certcard .row { display:flex; gap:8px; margin-top:9px; }
+.cos-certcard .row input { flex:1; font-size:12.5px; padding:8px 10px; border:1.5px solid var(--line); border-radius:10px; outline:none; font-family:inherit; }
 
 .cos-crm { display:flex; align-items:center; gap:11px; padding:13px; border-radius:15px; background:var(--card); border:1px solid var(--line); margin-bottom:9px; }
 .cos-crm .st { margin-left:auto; }
@@ -215,8 +229,14 @@ async function callClaude(messages, { webSearch = false, maxTokens = 1000, timeo
     res = await fetch(AI_ENDPOINT, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body), signal: ctrl.signal });
   } catch (e) { if (e.name === "AbortError") throw new Error("TIMEOUT"); throw new Error("NETWORK"); }
   finally { if (timer) clearTimeout(timer); }
-  if (res.status === 401 || res.status === 403) throw new Error("AI_AUTH");
-  if (!res.ok) throw new Error("AI_HTTP_" + res.status);
+  if (!res.ok) {
+    let detail = "";
+    try { const err = await res.json(); detail = err?.error || err?.detail || ""; } catch {}
+    console.error("[CareerOS] /api/ai error", res.status, detail);
+    if (res.status === 401 || res.status === 403) throw new Error("AI_AUTH");
+    if (res.status === 503) throw new Error(detail || "AI not configured");
+    throw new Error(detail || ("AI_HTTP_" + res.status));
+  }
   const data = await res.json();
   return (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
 }
@@ -258,7 +278,7 @@ async function fetchSalary(profile, prefs) {
   const role = (prefs.titles||[])[0] || profile.workHistory?.[0]?.title || "professional";
   const loc = prefs.remoteOnly ? "remote (US)" : `${prefs.city||profile.city||""}, ${prefs.state||profile.state||""}`;
   return parseJSON(await callClaude([{ role:"user", content:
-    `Estimate US comp for ${role} ${loc}. Target:${prefs.salaryTarget||"n/a"}. Certs:${(profile.certifications||[]).join(", ")||"none"}. Clearance:${profile.clearance||"none"} (TS/SCI + Security+/Cloud+/CCNA raise cleared/cyber ceilings — reflect it). Return ONLY JSON:
+    `Estimate US comp for ${role} ${loc}. Target:${prefs.salaryTarget||"n/a"}. Certs:${certNames(profile.certifications).join(", ")||"none"}. Clearance:${profile.clearance||"none"} (TS/SCI + Security+/Cloud+/CCNA raise cleared/cyber ceilings — reflect it). Return ONLY JSON:
 {"marketLow":"$0k","expectedLow":"$0k","expectedHigh":"$0k","marketHigh":"$0k","potentialLow":"$0k","potentialHigh":"$0k","targetVerdict":"encouraging-honest sentence","bestTitles":["","",""],"recommendedCerts":[""]}` }], { webSearch:true, timeoutMs: 20000 }));
 }
 
@@ -303,7 +323,7 @@ async function annotateJobs(profile, prefs, raw) {
     `Score each REAL job vs this candidate. Be generous; show stretch fits too. Return ONLY JSON array, same "i":
 [{"i":0,"match":0,"interview":0,"why":["",""],"strengths":["",""],"missing":[""],"improve":["",""],"futureMatch":0}]
 match=resume fit %, interview=interview-probability % (market competitiveness + resume strength + required quals — distinct from match), why=2-3 short "matches X" fit reasons, strengths=detailed matched requirements, missing=missing requirements, improve=concrete steps, futureMatch=match % after improvements.
-Skills:${(profile.skills||[]).concat(profile.technicalSkills||[]).join(", ")} | Certs:${(profile.certifications||[]).join(", ")||"none"} | Clearance:${profile.clearance||"none"} | Edu:${(profile.education||[]).map(e=>e.degree).join(", ")||"none"}
+Skills:${(profile.skills||[]).concat(profile.technicalSkills||[]).join(", ")} | Certs:${certNames(profile.certifications).join(", ")||"none"} | Clearance:${profile.clearance||"none"} | Edu:${(profile.education||[]).map(e=>e.degree).join(", ")||"none"}
 Roles:${(profile.workHistory||[]).slice(0,3).map(w=>w.title).join(", ")} | Targets:${(prefs.titles||[]).join(", ")}
 Jobs:\n${JSON.stringify(slim)}` }], { maxTokens:1900, timeoutMs: 25000 });
   const ann = parseJSON(out) || []; const by={}; ann.forEach(a=>by[a.i]=a);
@@ -341,7 +361,7 @@ async function getJobs(profile, prefs) {
 async function coachInsights(profile, jobs, score, prefs) {
   const out = await callClaude([{ role:"user", content:
     `Encouraging-but-honest advisor. 3 one-sentence insights. Never say a target is "unrealistic" — name role types that reach it. Return ONLY JSON {"insights":["","",""]}.
-Target:${prefs.salaryTarget||"n/a"} Clearance:${profile.clearance||"none"} Certs:${(profile.certifications||[]).join(", ")||"none"} Score:${score?.score??"n/a"} Jobs:${jobs.length} Top:${jobs[0]?.title||"none"}` }], { maxTokens:380, timeoutMs:18000 });
+Target:${prefs.salaryTarget||"n/a"} Clearance:${profile.clearance||"none"} Certs:${certNames(profile.certifications).join(", ")||"none"} Score:${score?.score??"n/a"} Jobs:${jobs.length} Top:${jobs[0]?.title||"none"}` }], { maxTokens:380, timeoutMs:18000 });
   return parseJSON(out)?.insights || [];
 }
 const D = { s:"===SUMMARY===", b:"===BULLETS===", k:"===KEYWORDS===", sk:"===SKILLS===", r:"===FULL_RESUME===", e:"===END===" };
@@ -386,14 +406,14 @@ async function optimizeForJob(profile, job){
     `For this candidate applying to "${job.title}" at ${job.company}, return ONLY JSON:
 {"currentMatch":${job.match||70},"missingSkills":["",""],"missingKeywords":["",""],"changes":["concrete resume change",""],"upgrades":[{"action":"Add AWS Certification","newMatch":81},{"action":"Add Splunk experience","newMatch":87}]}
 upgrades: 2-4 specific actions, each with the realistic match % it would unlock (ascending, max 97). Base on the gap between candidate and job.
-Candidate skills:${(profile.skills||[]).concat(profile.technicalSkills||[]).join(", ")} | Certs:${(profile.certifications||[]).join(", ")||"none"} | Clearance:${profile.clearance||"none"}
+Candidate skills:${(profile.skills||[]).concat(profile.technicalSkills||[]).join(", ")} | Certs:${certNames(profile.certifications).join(", ")||"none"} | Clearance:${profile.clearance||"none"}
 Job:${job.title} — ${(job.missing||[]).join(", ")||job.description||""}` }], { maxTokens:700, timeoutMs:20000 });
   return parseJSON(out);
 }
 // Salary negotiation numbers
 async function negotiationNumbers(profile, job){
   const out=await callClaude([{role:"user",content:
-    `Estimate negotiation figures for ${job.title} at ${job.company} (${job.location||"US"}). Listed: ${job.salary||"unlisted"}. Candidate clearance:${profile.clearance||"none"}, certs:${(profile.certifications||[]).join(", ")||"none"}. Return ONLY JSON:
+    `Estimate negotiation figures for ${job.title} at ${job.company} (${job.location||"US"}). Listed: ${job.salary||"unlisted"}. Candidate clearance:${profile.clearance||"none"}, certs:${certNames(profile.certifications).join(", ")||"none"}. Return ONLY JSON:
 {"market":"$0k–$0k","expectedOffer":"$0k–$0k","negotiationTarget":"$0k","rationale":"one sentence on why the target is justified"}` }], { maxTokens:300, timeoutMs:18000 });
   return parseJSON(out);
 }
@@ -407,9 +427,16 @@ Candidate: ${(profile?.workHistory||[]).slice(0,2).map(w=>w.title).join(", ")}, 
 
 /* ============ helpers ============ */
 function humanError(e){ const m=e?.message||"";
-  if(m==="AI_AUTH")return "AI service not connected (API key missing)."; if(m==="TIMEOUT")return "This is taking longer than expected. Please try again.";
-  if(m.startsWith("AI_HTTP")||m==="NETWORK")return "AI service temporarily unavailable. Please try again."; if(m==="PARSE")return "Couldn't read the AI response. Try again.";
-  if(m==="EMPTY")return "That file looks empty."; if(m==="UNSUPPORTED")return "Use PDF, DOCX, or TXT."; return "Something went wrong."; }
+  if(m==="AI_AUTH")return "AI service not connected (check ANTHROPIC_API_KEY in Vercel).";
+  if(m==="TIMEOUT")return "This is taking longer than expected. Please try again.";
+  if(m==="NETWORK")return "Couldn't reach the AI service. Please try again.";
+  if(m==="PARSE")return "Couldn't read the AI response. Try again.";
+  if(m==="EMPTY")return "That file looks empty.";
+  if(m==="UNSUPPORTED")return "Use PDF, DOCX, or TXT.";
+  if(m.startsWith("AI_HTTP"))return "AI service error ("+m.replace("AI_HTTP_","HTTP ")+"). Please try again.";
+  // Otherwise it's the real upstream message (e.g. model/credit/key issue) — show it.
+  return m || "Something went wrong."; }
+const certNames=(arr=[])=>arr.map(c=>typeof c==="string"?c:(c?.name||"")).filter(Boolean);
 const slug=t=>t.replace(/[^a-z0-9]+/gi,"_").toLowerCase().replace(/^_+|_+$/g,"")||"document";
 function saveBlob(blob,name){ const url=URL.createObjectURL(blob);
   try{const a=document.createElement("a");a.href=url;a.download=name;a.style.display="none";document.body.appendChild(a);a.click();document.body.removeChild(a);}catch{window.open(url,"_blank");}
@@ -569,14 +596,32 @@ export default function CareerOS() {
         <button className="cos-btn cos-btn-ghost cos-btn-block" style={{marginTop:10}} disabled={parsing} onClick={()=>{setProfile(empty());setFlow("review");}}><Pencil size={15}/> Build Manually</button>
         <div style={{marginTop:16,fontSize:12,color:"var(--muted)"}}>PDF, DOCX, or TXT</div></div>)}
       {flow==="review"&&profile&&(<div className="cos-onb">
-        <div className="cos-dots"><i className="on"/><i/><i/><i/><i/></div><h1>Review your profile</h1><p className="lead">Edit anything we got wrong.</p>
-        <div className="cos-card flat cos-grow" style={{overflowY:"auto"}}>
-          {[["Name","name"],["Email","email"],["Phone","phone"],["City","city"],["State","state"]].map(([k,f])=>(<div key={f} className="cos-editrow"><span className="k">{k}</span><input className="cos-input" style={{padding:"9px 12px",fontSize:13.5}} value={profile[f]||""} onChange={e=>setProfile({...profile,[f]:e.target.value})}/></div>))}
-          <div className="cos-editrow"><span className="k">Skills</span><input className="cos-input" style={{padding:"9px 12px",fontSize:13.5}} value={(profile.skills||[]).join(", ")} onChange={e=>setProfile({...profile,skills:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)})}/></div>
-          <div className="cos-editrow"><span className="k">Certs</span><input className="cos-input" style={{padding:"9px 12px",fontSize:13.5}} value={(profile.certifications||[]).join(", ")} onChange={e=>setProfile({...profile,certifications:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)})}/></div>
-          <div className="cos-editrow"><span className="k">Clearance</span><input className="cos-input" style={{padding:"9px 12px",fontSize:13.5}} value={profile.clearance||""} onChange={e=>setProfile({...profile,clearance:e.target.value})}/></div>
-          <div style={{fontSize:12,color:"var(--muted)",paddingTop:9}}>{(profile.workHistory||[]).length} roles · {(profile.education||[]).length} education detected</div></div>
-        <div style={{display:"flex",gap:10,marginTop:14}}><button className="cos-btn cos-btn-ghost" onClick={()=>setFlow("welcome")}><ChevronLeft size={15}/></button><button className="cos-btn cos-btn-primary" style={{flex:1}} onClick={()=>setFlow("titles")}>Looks Good <ChevronRight size={15}/></button></div></div>)}
+        <div className="cos-dots"><i className="on"/><i/><i/><i/><i/></div><h1>Review your profile</h1><p className="lead">We pre-filled what we could. Tidy it up — this powers your matches.</p>
+        <div className="cos-grow" style={{overflowY:"auto"}}>
+          <div className="cos-card flat" style={{marginBottom:13}}>
+            <div className="cos-sec">Basic info</div>
+            {[["Full name","name"],["Email","email"],["Phone","phone"],["City","city"],["State","state"]].map(([k,f])=>(
+              <div key={f} className="cos-editrow"><span className="k">{k}</span><input className="cos-input" style={{padding:"9px 12px",fontSize:13.5}} value={profile[f]||""} onChange={e=>setProfile({...profile,[f]:e.target.value})}/></div>))}
+          </div>
+          <div className="cos-card flat" style={{marginBottom:13}}>
+            <SkillPills value={profile.skills||[]} onChange={v=>setProfile({...profile,skills:v})} label="Skills"/>
+          </div>
+          <div className="cos-card flat" style={{marginBottom:13}}>
+            <CertCards value={profile.certifications||[]} onChange={v=>setProfile({...profile,certifications:v})}/>
+            <ClearanceSelect value={profile.clearance} onChange={v=>setProfile({...profile,clearance:v})} openTo={prefs.clearancePref&&prefs.clearancePref!=="None"&&prefs.clearancePref!=="Any"} onToggleOpen={c=>setPrefs({...prefs,clearancePref:c?(profile.clearance&&profile.clearance!=="None"?profile.clearance:"Secret"):"Any"})}/>
+          </div>
+          {(profile.workHistory||[]).length>0&&(<div className="cos-card flat" style={{marginBottom:13}}>
+            <div className="cos-sec">Experience</div>
+            {(profile.workHistory||[]).slice(0,5).map((w,i)=>(<div key={i} style={{display:"flex",gap:10,paddingBottom:10,marginBottom:10,borderBottom:i<Math.min(4,(profile.workHistory||[]).length-1)?"1px solid var(--line)":"none"}}>
+              <div style={{width:9,height:9,borderRadius:"50%",background:"var(--primary)",marginTop:5,flexShrink:0}}/>
+              <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13.5}}>{w.title||"Role"}</div><div style={{fontSize:12,color:"var(--muted)"}}>{w.company||""}{w.dates?` · ${w.dates}`:""}</div></div></div>))}
+          </div>)}
+          {(profile.education||[]).length>0&&(<div className="cos-card flat" style={{marginBottom:13}}>
+            <div className="cos-sec">Education</div>
+            {(profile.education||[]).map((e,i)=>(<div key={i} style={{fontSize:13.5,marginBottom:5}}><b>{e.degree||"Degree"}</b>{e.school?` — ${e.school}`:""}{e.year?` (${e.year})`:""}</div>))}
+          </div>)}
+        </div>
+        <div style={{display:"flex",gap:10,marginTop:14}}><button className="cos-btn cos-btn-ghost" onClick={()=>setFlow("welcome")}><ChevronLeft size={15}/></button><button className="cos-btn cos-btn-primary" style={{flex:1}} onClick={()=>setFlow("titles")}>Looks good <ChevronRight size={15}/></button></div></div>)}
       {flow==="titles"&&(<OnbStep dots={2} title="What roles are you after?" lead="Pick any that fit — selections drive your job matches." back={()=>setFlow("review")} next={()=>setFlow("loc")} canNext={prefs.titles.length>0}>
         {recommended.length>0&&(<div style={{marginBottom:14}}><div className="cos-banner ok" style={{marginBottom:10}}><Sparkle size={15} style={{flexShrink:0}}/>Based on your resume, we recommend these roles.</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:8}}>{recommended.map(t=>(<button key={t} className={`cos-chip ${prefs.titles.includes(t)?"on":""}`} onClick={()=>toggle("titles",t)}>{prefs.titles.includes(t)?"✓ ":"+ "}{t}</button>))}</div></div>)}
@@ -620,7 +665,8 @@ export default function CareerOS() {
     <div className="cos-appbar">
       <div><h1 className="serif">{tab==="home"?`Hi, ${profile?.name?.split(" ")[0]||"there"}`:TABS.find(t=>t[0]===tab)[1]}</h1>
         <div className="sub">{prefs.remoteOnly?"Remote":(prefs.city?`${prefs.city}, ${prefs.state}`:"")} · Target {effSal||"—"}</div></div>
-      <div className="cos-avatar">{initials}</div></div>
+      <button className="cos-avatar" title={auth?.configured?"Sign out":"Profile"} style={{border:"none",cursor:auth?.configured?"pointer":"default"}}
+        onClick={async()=>{ if(auth?.configured){ try{ await auth.signOut(); }catch{} location.reload(); } }}>{initials}</button></div>
 
     <div className="cos-scroll" ref={scrollRef} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
       <div className="cos-ptr" style={{height:ptr}}>{ptr>50?<><RefreshCw size={14} className="cos-spin"/> Release to refresh</>:ptr>0?<><RefreshCw size={14}/> Pull to refresh</>:null}</div>
@@ -938,6 +984,47 @@ function JobSkeleton(){
     <div className="cos-skel" style={{height:12,width:"45%",background:"var(--line)",borderRadius:6,marginTop:8}}/>
     <div style={{display:"flex",gap:8,marginTop:14}}><div className="cos-skel" style={{height:52,flex:1,background:"var(--line)",borderRadius:13}}/><div className="cos-skel" style={{height:52,flex:1,background:"var(--line)",borderRadius:13}}/></div>
     <div className="cos-skel" style={{height:40,background:"var(--line)",borderRadius:11,marginTop:12}}/></div>);
+}
+
+const SKILL_SUGGESTIONS = ["Project Management","Leadership","Python","SQL","Excel","Cybersecurity","Network Operations","Cloud (AWS)","Cloud (Azure)","Linux","Communication","Data Analysis","Agile/Scrum","Risk Management","Splunk","SIEM","Incident Response","Stakeholder Management","Product Strategy","Customer Success"];
+const CLEARANCE_OPTIONS = ["None","Public Trust","Secret","Top Secret","TS/SCI","Other"];
+
+// Searchable, suggested, removable skill pills (LinkedIn-style)
+function SkillPills({ value=[], onChange, label="Skills", suggestions=SKILL_SUGGESTIONS }){
+  const [q,setQ]=useState("");
+  const add=s=>{ const v=s.trim(); if(!v||value.includes(v))return; onChange([...value,v]); setQ(""); };
+  const remove=s=>onChange(value.filter(x=>x!==s));
+  const sugg=suggestions.filter(s=>!value.includes(s) && (!q || s.toLowerCase().includes(q.toLowerCase()))).slice(0,8);
+  return (<div className="cos-field"><span className="cos-label">{label}</span>
+    {value.length>0&&<div className="cos-pills">{value.map(s=>(<span key={s} className="cos-pill-tag">{s}<button onClick={()=>remove(s)} aria-label={"Remove "+s}><X size={13}/></button></span>))}</div>}
+    <input className="cos-input" style={{padding:"11px 13px",fontSize:14}} placeholder={`Search or type a skill, press Enter`} value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();add(q);}}}/>
+    {sugg.length>0&&<div className="cos-sugg">{sugg.map(s=><button key={s} onClick={()=>add(s)}>+ {s}</button>)}</div>}
+  </div>);
+}
+
+// Certification cards: name + issuer + earned + expires
+function CertCards({ value=[], onChange }){
+  const items = value.map(c => typeof c === "string" ? { name:c, issuer:"", earned:"", expires:"" } : c);
+  const [nm,setNm]=useState("");
+  const add=()=>{ const v=nm.trim(); if(!v)return; onChange([...items,{name:v,issuer:"",earned:"",expires:""}]); setNm(""); };
+  const upd=(i,k,val)=>{ const next=items.map((c,x)=>x===i?{...c,[k]:val}:c); onChange(next); };
+  const remove=i=>onChange(items.filter((_,x)=>x!==i));
+  return (<div className="cos-field"><span className="cos-label">Certifications</span>
+    {items.map((c,i)=>(<div key={i} className="cos-certcard">
+      <div className="top"><span className="nm">{c.name}</span><button style={{background:"none",border:"none",cursor:"pointer",color:"var(--muted)"}} onClick={()=>remove(i)}><X size={15}/></button></div>
+      <div className="row"><input placeholder="Issuer (e.g. CompTIA)" value={c.issuer||""} onChange={e=>upd(i,"issuer",e.target.value)}/></div>
+      <div className="row"><input placeholder="Earned (e.g. 2023)" value={c.earned||""} onChange={e=>upd(i,"earned",e.target.value)}/><input placeholder="Expires (or —)" value={c.expires||""} onChange={e=>upd(i,"expires",e.target.value)}/></div>
+    </div>))}
+    <div style={{display:"flex",gap:8}}><input className="cos-input" style={{padding:"11px 13px",fontSize:14,flex:1}} placeholder="Add a certification (e.g. Security+)" value={nm} onChange={e=>setNm(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();add();}}}/>
+      <button className="cos-btn cos-btn-soft cos-btn-sm" onClick={add}>Add</button></div>
+  </div>);
+}
+
+function ClearanceSelect({ value, onChange, openTo, onToggleOpen }){
+  return (<div className="cos-field"><span className="cos-label"><Shield size={13}/> Security clearance</span>
+    <select className="cos-sel" value={value||"None"} onChange={e=>onChange(e.target.value)}>{CLEARANCE_OPTIONS.map(o=><option key={o}>{o}</option>)}</select>
+    <label style={{display:"flex",alignItems:"center",gap:9,marginTop:11,fontSize:13.5}}><input type="checkbox" checked={!!openTo} onChange={e=>onToggleOpen(e.target.checked)}/> Open to cleared roles</label>
+  </div>);
 }
 
 function OnbStep({dots,title,lead,children,back,next,canNext,nextLabel="Continue"}){
